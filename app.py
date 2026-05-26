@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import shap
 import matplotlib.pyplot as plt
+import sklearn, xgboost
 
 st.set_page_config(
     page_title="AquaCheck — Potabilité de l'eau",
@@ -22,7 +23,6 @@ imputer  = pkg['imputer']
 scaler   = pkg['scaler']
 seuil    = pkg['seuil']
 who      = pkg['who_limits']
-features_originales = pkg['features_originales']
 features_finales    = pkg['features_finales']
 metrics  = pkg['metrics']
 
@@ -71,6 +71,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ── Header ─────────────────────────────────────────────────
 st.markdown("# 💧 AquaCheck")
 st.markdown("**Outil de prédiction de potabilité de l'eau** · Modèle Stacking (XGBoost + Random Forest + LR)")
 
@@ -120,7 +121,7 @@ with col_result:
 
     if analyser:
 
-        # ── Feature engineering — même logique qu'à l'entraînement ──
+        # ── Feature engineering ────────────────────────────────
         ph_optimal    = float((ph >= 6.5) and (ph <= 8.5))
         ph_hors_norme = float((ph < 6.5) or (ph > 8.5))
         ph_extreme    = float((ph < 5.0) or (ph > 10.0))
@@ -134,8 +135,6 @@ with col_result:
         )
         ph_x_solids = ph * solids
 
-        # ── Construire le vecteur dans le bon ordre ────────────────
-        # IMPORTANT : l'ordre doit correspondre exactement à features_finales
         row = {
             'ph':              ph,
             'Hardness':        hardness,
@@ -154,23 +153,21 @@ with col_result:
             'ph_x_solids':     ph_x_solids,
         }
 
-        # Construire le DataFrame dans l'ordre exact de l'entraînement
         X_input = pd.DataFrame([row])[features_finales]
+        X_imp   = imputer.transform(X_input)
+        X_sc    = scaler.transform(X_imp)
 
-        # ── Preprocessing ──────────────────────────────────────────
-        X_imp = imputer.transform(X_input)
-        X_sc  = scaler.transform(X_imp)
-
-        # ── Débogage : afficher la proba brute ─────────────────────
+        # ── Prédiction ─────────────────────────────────────────
         proba   = model.predict_proba(X_sc)[0][1]
         verdict = proba >= seuil
         pct     = round(proba * 100, 1)
 
-        # ── Verdict ────────────────────────────────────────────────
+        # ── Verdict ────────────────────────────────────────────
         if verdict:
             st.markdown(f"""<div class="verdict-potable">
                 <div style="font-size:2.5rem">✅</div>
-                <div style="font-size:1.6rem; font-weight:600; color:#4ade80; margin:8px 0">POTABLE</div>
+                <div style="font-size:1.6rem; font-weight:600;
+                     color:#4ade80; margin:8px 0">POTABLE</div>
                 <div style="color:#94a3b8; font-size:0.9rem">
                     Probabilité : {pct}% · seuil {int(seuil*100)}%
                 </div>
@@ -178,19 +175,15 @@ with col_result:
         else:
             st.markdown(f"""<div class="verdict-danger">
                 <div style="font-size:2.5rem">⛔</div>
-                <div style="font-size:1.6rem; font-weight:600; color:#f87171; margin:8px 0">NON POTABLE</div>
+                <div style="font-size:1.6rem; font-weight:600;
+                     color:#f87171; margin:8px 0">NON POTABLE</div>
                 <div style="color:#94a3b8; font-size:0.9rem">
                     Probabilité : {pct}% · seuil {int(seuil*100)}%
                 </div>
             </div>""", unsafe_allow_html=True)
 
-        st.markdown(f"<br><small style='color:#64748b'>Probabilité brute : {proba:.4f} | Seuil : {seuil}</small>",
-                    unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # ── Normes OMS ─────────────────────────────────────────────
-        st.markdown("**Contrôle normes OMS**")
+        # ── Normes OMS ─────────────────────────────────────────
+        st.markdown("<br>**Contrôle normes OMS**", unsafe_allow_html=True)
         params_display = {
             'ph': ph, 'Hardness': hardness, 'Solids': solids,
             'Chloramines': chloramines, 'Sulfate': sulfate,
@@ -214,22 +207,21 @@ with col_result:
                     <span style="color:#64748b">norme OMS : {norme_str}</span>
                 </div>""", unsafe_allow_html=True)
 
-        # ── SHAP ───────────────────────────────────────────────────
-        st.markdown("<br>**Pourquoi ce verdict ? (SHAP)**", unsafe_allow_html=True)
+        # ── SHAP ───────────────────────────────────────────────
+        st.markdown("<br>**Pourquoi ce verdict ? (SHAP)**",
+                    unsafe_allow_html=True)
         try:
             xgb_estimator = model.named_estimators_['xgb']
             explainer     = shap.TreeExplainer(xgb_estimator)
             shap_vals     = explainer.shap_values(X_sc)
-
-            shap_series = pd.Series(shap_vals[0], index=features_finales)
-            shap_sorted = shap_series.reindex(
+            shap_series   = pd.Series(shap_vals[0], index=features_finales)
+            shap_sorted   = shap_series.reindex(
                 shap_series.abs().sort_values(ascending=False).index
             ).head(8)
 
             fig, ax = plt.subplots(figsize=(5, 3.5))
             fig.patch.set_facecolor('#0d1f3c')
             ax.set_facecolor('#0d1f3c')
-
             colors = ['#4ade80' if v > 0 else '#f87171'
                       for v in shap_sorted.values]
             ax.barh(shap_sorted.index, shap_sorted.values,
@@ -243,9 +235,26 @@ with col_result:
             plt.tight_layout()
             st.pyplot(fig)
             plt.close()
-
         except Exception as e:
             st.warning(f"SHAP non disponible : {e}")
+
+        # ── DIAGNOSTIC — supprimer après vérification ──────────
+        with st.expander("Diagnostic technique"):
+            st.write(f"sklearn : {sklearn.__version__}")
+            st.write(f"xgboost : {xgboost.__version__}")
+            st.write(f"Probabilité brute : {proba:.6f}")
+            st.write(f"Seuil : {seuil}")
+            st.write("X_input (avant preprocessing) :")
+            st.dataframe(X_input)
+            st.write("X_sc (après preprocessing) :")
+            st.dataframe(pd.DataFrame(X_sc, columns=features_finales))
+            try:
+                xgb_p = model.named_estimators_['xgb'].predict_proba(X_sc)[0][1]
+                rf_p  = model.named_estimators_['rf'].predict_proba(X_sc)[0][1]
+                st.write(f"XGBoost seul : {xgb_p:.6f}")
+                st.write(f"Random Forest seul : {rf_p:.6f}")
+            except Exception as e:
+                st.write(f"Erreur sous-modèles : {e}")
 
     else:
         st.markdown("""
