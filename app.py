@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import shap
 import matplotlib.pyplot as plt
-import sklearn, xgboost
 
 st.set_page_config(
     page_title="AquaCheck — Potabilité de l'eau",
@@ -23,7 +22,7 @@ imputer  = pkg['imputer']
 scaler   = pkg['scaler']
 seuil    = pkg['seuil']
 who      = pkg['who_limits']
-features_finales    = pkg['features_finales']
+features_finales = pkg['features_finales']
 metrics  = pkg['metrics']
 
 st.markdown("""
@@ -88,7 +87,7 @@ with c2:
     </div>""", unsafe_allow_html=True)
 with c3:
     st.markdown(f"""<div class="metric-card">
-        <div class="metric-val">{round(metrics['fn']/(metrics['fn']+256)*100, 1)}%</div>
+        <div class="metric-val">{round(metrics['fn']/(metrics['fn']+metrics['tp'])*100, 1)}%</div>
         <div class="metric-lbl">Taux erreur critique</div>
     </div>""", unsafe_allow_html=True)
 with c4:
@@ -114,7 +113,7 @@ with col_input:
     trihalomethanes = st.slider('Trihalomethanes (µg/L)',  0.0,  124.0,  66.0,  0.1)
     turbidity       = st.slider('Turbidity (NTU)',         1.0,    6.7,   4.0,  0.1)
 
-    analyser = st.button("Analyser cette eau", use_container_width=True)
+    analyser = st.button("🔍 Analyser cette eau", use_container_width=True)
 
 with col_result:
     st.markdown("### Résultat de l'analyse")
@@ -191,8 +190,8 @@ with col_result:
             'Trihalomethanes': trihalomethanes, 'Turbidity': turbidity
         }
         for feat, (lo, hi) in who.items():
-            val  = params_display[feat]
-            hors = (lo is not None and val < lo) or (hi is not None and val > hi)
+            val       = params_display[feat]
+            hors      = (lo is not None and val < lo) or (hi is not None and val > hi)
             norme_str = f"{lo}–{hi}" if lo else f"< {hi}"
             if hors:
                 st.markdown(f"""<div class="alert-box">
@@ -237,24 +236,6 @@ with col_result:
             plt.close()
         except Exception as e:
             st.warning(f"SHAP non disponible : {e}")
-
-        # ── DIAGNOSTIC — supprimer après vérification ──────────
-        with st.expander("Diagnostic technique"):
-            st.write(f"sklearn : {sklearn.__version__}")
-            st.write(f"xgboost : {xgboost.__version__}")
-            st.write(f"Probabilité brute : {proba:.6f}")
-            st.write(f"Seuil : {seuil}")
-            st.write("X_input (avant preprocessing) :")
-            st.dataframe(X_input)
-            st.write("X_sc (après preprocessing) :")
-            st.dataframe(pd.DataFrame(X_sc, columns=features_finales))
-            try:
-                xgb_p = model.named_estimators_['xgb'].predict_proba(X_sc)[0][1]
-                rf_p  = model.named_estimators_['rf'].predict_proba(X_sc)[0][1]
-                st.write(f"XGBoost seul : {xgb_p:.6f}")
-                st.write(f"Random Forest seul : {rf_p:.6f}")
-            except Exception as e:
-                st.write(f"Erreur sous-modèles : {e}")
 
     else:
         st.markdown("""
